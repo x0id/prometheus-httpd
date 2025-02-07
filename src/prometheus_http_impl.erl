@@ -16,7 +16,7 @@
 
 ?DOC("Renders metrics.").
 -spec reply(#{
-    path => string(),
+    path => true | string(),
     headers => fun((string(), string()) -> string()),
     registry => prometheus_registry:registry(),
     standalone => boolean()
