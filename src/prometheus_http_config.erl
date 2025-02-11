@@ -42,7 +42,7 @@
 path() ->
     get_value(path, ?DEFAULT_PATH).
 
--spec valid_path_and_registry(string(), prometheus_registry:registry()) ->
+-spec valid_path_and_registry(true | string(), prometheus_registry:registry()) ->
     false
     | {true, prometheus_registry:registry()}
     | {registry_conflict, prometheus_registry:registry(), prometheus_registry:registry()}
