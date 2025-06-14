@@ -8,7 +8,7 @@
 -endif.
 ?MODULEDOC("Internal module for `prometheus_httpd`.").
 
--export([reply/1, setup/0]).
+-export([render_format/2, reply/1, setup/0]).
 
 -define(SCRAPE_DURATION, telemetry_scrape_duration_seconds).
 -define(SCRAPE_SIZE, telemetry_scrape_size_bytes).
@@ -19,21 +19,27 @@
     path => true | string(),
     headers => fun((string(), string()) -> string()),
     registry => prometheus_registry:registry(),
-    standalone => boolean()
+    standalone => boolean(),
+    render =>
+        undefined
+        | fun((module(), prometheus_registry:registry()) -> {binary(), binary()} | undefined)
 }) -> {integer(), list(), iodata()} | false.
-reply(#{
-    path := Path,
-    headers := Headers,
-    registry := Registry,
-    standalone := Standalone
-}) ->
+reply(
+    #{
+        path := Path,
+        headers := Headers,
+        registry := Registry,
+        standalone := Standalone
+    } = Args
+) ->
     case prometheus_http_config:valid_path_and_registry(Path, Registry) of
         {true, RealRegistry} ->
+            Render = maps:get(render, Args, undefined),
             if_authorized(
                 Path,
                 Headers,
                 fun() ->
-                    format_metrics(Headers, RealRegistry)
+                    format_metrics(Headers, RealRegistry, Render)
                 end
             );
         {registry_conflict, _ReqR, _ConfR} ->
@@ -81,10 +87,10 @@ setup() ->
 %% Private Parts
 %% ===================================================================
 
-format_metrics(Headers, Registry) ->
+format_metrics(Headers, Registry, Render) ->
     Accept = Headers("accept", "text/plain"),
     AcceptEncoding = Headers("accept-encoding", undefined),
-    format_metrics(Accept, AcceptEncoding, Registry).
+    format_metrics(Accept, AcceptEncoding, Registry, Render).
 
 maybe_render_index(Standalone, Path, Headers) ->
     case Standalone of
@@ -144,16 +150,16 @@ prepare_index(Path) ->
     {ok, Content} = file:read_file(FileName),
     re:replace(Content, "M_E_T_R_I_C_S", Path, [global, {return, list}]).
 
-format_metrics(Accept, AcceptEncoding, Registry) ->
+format_metrics(Accept, AcceptEncoding, Registry, Render) ->
     case negotiate_format(Accept) of
         undefined ->
             {406, [], <<>>};
         Format ->
-            {ContentType, Scrape} = render_format(Format, Registry),
             case negotiate_encoding(AcceptEncoding) of
                 undefined ->
                     {406, [], <<>>};
                 Encoding ->
+                    {ContentType, Scrape} = render_format(Format, Registry, Render),
                     encode_format(ContentType, binary_to_list(Encoding), Scrape, Registry)
             end
     end.
@@ -177,6 +183,18 @@ negotiate_encoding(AcceptEncoding) ->
         <<"deflate">>
     ]).
 
+render_format(Format, Registry, Render) when is_function(Render, 2) ->
+    case Render(Format, Registry) of
+        {ContentType, Scrape} ->
+            {ContentType, Scrape};
+        _Undefined ->
+            render_format(Format, Registry)
+    end;
+render_format(Format, Registry, _Undefined) ->
+    render_format(Format, Registry).
+
+?DOC("Renders metrics using given formatter.").
+-spec render_format(module(), prometheus_registry:registry()) -> {binary(), binary()}.
 render_format(Format, Registry) ->
     ContentType = Format:content_type(),
     TelemetryRegistry = prometheus_http_config:telemetry_registry(),
